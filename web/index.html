@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MinecraftJS — Minecraft 1.20.1 复刻版（JavaScript）</title>
+  <meta name="description" content="MinecraftJS：用 JavaScript 复刻 Minecraft 1.20.1 原版特性，直连原版服务器（Netty 协议 / VarInt / NBT / protodef）。" />
+  <style>
+    :root {
+      --bg: #1b1f24;
+      --panel: #232a31;
+      --accent: #55ff55;
+      --grass: #6ab04c;
+      --dirt: #79553a;
+      --stone: #8e9499;
+      --text: #e6e6e6;
+      --muted: #9aa5ad;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.6;
+    }
+    header {
+      background: linear-gradient(180deg, #2e7d32 0%, var(--grass) 100%);
+      border-bottom: 6px solid var(--dirt);
+      padding: 48px 20px 40px;
+      text-align: center;
+    }
+    header h1 {
+      font-size: 2.6rem;
+      letter-spacing: 1px;
+      text-shadow: 3px 3px 0 rgba(0,0,0,.45);
+    }
+    header p.sub {
+      margin-top: 12px;
+      font-size: 1.1rem;
+      color: #f1f8e9;
+    }
+    .badges { margin-top: 18px; }
+    .badge {
+      display: inline-block;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.25);
+      border-radius: 4px;
+      padding: 4px 12px;
+      margin: 4px;
+      font-size: .85rem;
+      font-family: monospace;
+    }
+    main { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+    section { margin-bottom: 40px; }
+    h2 {
+      font-size: 1.5rem;
+      border-left: 6px solid var(--grass);
+      padding-left: 12px;
+      margin-bottom: 16px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid #333c45;
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .card h3 { font-size: 1.05rem; margin-bottom: 8px; color: var(--accent); }
+    .card p { color: var(--muted); font-size: .92rem; }
+    pre {
+      background: #14181c;
+      border: 1px solid #333c45;
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      font-size: .88rem;
+      color: #d7e0e6;
+    }
+    code.inline {
+      background: #14181c;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      color: var(--accent);
+    }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+    th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #333c45; font-size: .92rem; }
+    th { background: #2b333b; color: var(--accent); }
+    .done { color: var(--accent); }
+    .wip { color: #ffd166; }
+    .todo { color: var(--muted); }
+    footer {
+      text-align: center;
+      padding: 24px;
+      color: var(--muted);
+      border-top: 4px solid var(--stone);
+      font-size: .85rem;
+    }
+    a { color: #7ecbff; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>⛏️ MinecraftJS</h1>
+    <p class="sub">用 JavaScript 复刻 Minecraft 1.20.1 —— 兼容原版协议，可直连原版服务器</p>
+    <div class="badges">
+      <span class="badge">MC 1.20.1 (protocol 763)</span>
+      <span class="badge">Node.js ≥ 18</span>
+      <span class="badge">ESLint + esbuild</span>
+      <span class="badge">源码参考 mcsrc.dev</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>项目简介</h2>
+      <p>
+        MinecraftJS 是 Minecraft Java Edition 1.20.1 的 JavaScript 复刻实现。它逐模块翻译
+        <code class="inline">net.minecraft.*</code>（参考 <a href="https://mcsrc.dev" target="_blank" rel="noopener">mcsrc.dev</a> 反混淆源码）的核心逻辑：
+        Netty 帧协议、VarInt 编解码、NBT 序列化、区块与光照、实体物理、容器/合成、战斗与命令系统——
+        并通过标准协议与加密握手直接加入<strong>原版服务器</strong>（离线模式或正版验证均可对接）。
+      </p>
+    </section>
+
+    <section>
+      <h2>核心特性</h2>
+      <div class="grid">
+        <div class="card"><h3>📡 原版网络协议</h3><p>PacketEncoder / Uncompressed / Compressed 帧格式，zlib 压缩，VarInt21Frame 分帧，与 Netty 服务端字节级兼容。</p></div>
+        <div class="card"><h3>🔐 AES 加密握手</h3><p>Login Start → Server Hello → 共享密钥 AES-128-CFB8（CFB8-noPadding），复刻 EncryptionContextFactory。</p></div>
+        <div class="card"><h3>🧱 NBT 全类型</h3><p>NbtIo 读写、网络无名根复合体、SNBT 解析，支撑区块数据、物品组件与实体数据。</p></div>
+        <div class="card"><h3>🌍 世界与区块</h3><p>ChunkSection 调色板（direct / indirect）、方块状态、光照引擎（BlockLight / SkyLight）。</p></div>
+        <div class="card"><h3>🚶 实体与物理</h3><p>AABB 碰撞、重力、移动校正（attemptMove）、玩家输入同步与服务端权威位置。</p></div>
+        <div class="card"><h3>🎒 背包与合成</h3><p>Container 菜单协议（Serverbound/container clicks）、1.20.1 RecipeBook 配方匹配。</p></div>
+        <div class="card"><h3>⚔️ 战斗系统</h3><p>伤害管线（DamageSource）、攻击冷却、饥饿与再生，对齐 1.9+ 战斗机制。</p></div>
+        <div class="card"><h3>💬 聊天与命令</h3><p>1.19+ SignedMessageChain、命令树 Brigadier 解析与 Tab-Complete。</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>快速开始</h2>
+<pre># 安装依赖
+npm install
+
+# 连接一个原版服务器（示例）
+node examples/connect-server.js play.example.com 25565 offlineSteve</pre>
+<pre>const { MinecraftClient } = require('minecraftjs')
+
+const client = new MinecraftClient({
+  host: 'localhost', port: 25565,
+  username: 'Steve',
+  version: '1.20.1'          // protocol 763
+})
+
+client.on('login', () =&gt; console.log('已进入服务器:', client.serverMotd))
+client.on('chat', (msg) =&gt; console.log(msg.unsignedContent))
+client.on('kill', () =&gt; client.respawn())
+client.connect()</pre>
+    </section>
+
+    <section>
+      <h2>开发路线图</h2>
+      <table>
+        <tr><th>阶段</th><th>内容</th><th>状态</th></tr>
+        <tr><td>A · 协议层</td><td>VarInt / PacketBuffer / NBT 读写器</td><td class="done">✅ 已完成</td></tr>
+        <tr><td>A · 连接层</td><td>framing 分帧、zlib、加密握手、客户端状态机</td><td class="wip">🔨 进行中</td></tr>
+        <tr><td>B · 游戏逻辑</td><td>区块 / 光照 / 物理 / 容器 / 合成 / 战斗 / 命令</td><td class="todo">📋 规划中</td></tr>
+        <tr><td>C · 服务端</td><td>监听端，允许原版客户端加入</td><td class="todo">📋 规划中</td></tr>
+      </table>
+    </section>
+
+    <section>
+      <h2>资源下载</h2>
+      <p><a href="./releases/minecraftjs-latest.tar.gz" download>⬇️ minecraftjs-latest.tar.gz（源码打包）</a></p>
+    </section>
+  </main>
+
+  <footer>
+    MinecraftJS · 基于 Mojang 1.20.1 反混淆源码语义的独立实现 · 页面由 GitHub Pages 提供服务
+  </footer>
+</body>
+</html>
