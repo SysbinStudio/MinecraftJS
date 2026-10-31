@@ -1,0 +1,30 @@
+{
+  "name": "workspace",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "minecraft-data": "^3.119.0",
+    "minecraft-protocol": "^1.54.0",
+    "mineflayer": "^4.25.0",
+    "node-fetch": "^2.7.0",
+    "node-rsa": "^2.0.0",
+    "prismarine-block": "^1.23.0",
+    "prismarine-item": "^1.18.0",
+    "prismarine-nbt": "^2.8.0",
+    "prismarine-world": "^3.7.0",
+    "protodef": "^1.19.0",
+    "typed-emitter": "^2.1.0",
+    "uuid": "^14.0.3",
+    "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}
