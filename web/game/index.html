@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>MinecraftJS · 浏览器客户端（three.js）</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: "Segoe UI", sans-serif; }
+    #game { display: block; width: 100vw; height: 100vh; }
+    .hud { position: fixed; color: #fff; text-shadow: 1px 1px 0 #000; font-size: 13px; pointer-events: none; }
+    #hud { top: 8px; left: 8px; white-space: pre; background: rgba(0,0,0,.35); padding: 6px 10px; border-radius: 4px; }
+    #status { top: 8px; right: 8px; background: rgba(0,0,0,.45); padding: 6px 10px; border-radius: 4px; }
+    #chat { bottom: 40px; left: 8px; max-width: 60vw; }
+    #chat div { background: rgba(0,0,0,.45); margin-top: 2px; padding: 2px 6px; border-radius: 3px; transition: opacity 1s; }
+    #chat-input { position: fixed; bottom: 8px; left: 8px; width: 60vw; display: none;
+      background: rgba(0,0,0,.7); color: #fff; border: 1px solid #888; padding: 6px 10px; font-size: 14px; outline: none; }
+    #menu { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(#79a6ff, #cfe4ff); z-index: 10; }
+    #menu .panel { background: rgba(0,0,0,.55); padding: 32px 40px; border-radius: 8px; text-align: center; color: #fff; }
+    #menu h1 { font-size: 2rem; text-shadow: 3px 3px 0 #000; margin-bottom: 8px; }
+    #menu p { color: #cfe4ff; margin-bottom: 18px; font-size: .9rem; }
+    #menu input { padding: 8px; margin: 4px; width: 160px; border: 2px solid #555; background: #222; color: #eee; }
+    #menu button { display: block; width: 100%; margin-top: 12px; padding: 10px; font-size: 1rem; cursor: pointer;
+      background: #6ab04c; border: 2px solid #4a7c36; border-bottom-width: 5px; color: #fff; }
+    #menu button:hover { filter: brightness(1.1); }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"></div>
+  <div class="hud" id="status">未连接</div>
+  <div class="hud" id="chat"></div>
+  <input id="chat-input" placeholder="输入消息或 /命令，回车发送，Esc 取消" />
+  <div id="menu">
+    <div class="panel">
+      <h1>MinecraftJS</h1>
+      <p>JavaScript 复刻 Minecraft 1.20.1 · three.js 渲染层<br/>需要本地 WS 网关：node src/network/ws-gateway.js</p>
+      <input id="in-user" placeholder="用户名" value="Steve" />
+      <input id="in-host" placeholder="网关地址" value="localhost" />
+      <input id="in-wsport" placeholder="WS端口" value="25566" style="width:80px" />
+      <input id="in-target" placeholder="目标服务器 host:port" value="127.0.0.1:25565" />
+      <button id="btn-play">游 玩 联 机</button>
+      <button id="btn-demo" style="background:#b8863c;border-color:#8a6428">离线演示世界（无需服务器）</button>
+    </div>
+  </div>
+  <script src="./data.js"></script>
+  <script src="./prismarine-chunk.js"></script>
+  <script src="../dist/minecraftjs-game.js"></script>
+  <script>
+    document.getElementById('btn-play').onclick = () => {
+      const user = document.getElementById('in-user').value || 'Steve'
+      const host = document.getElementById('in-host').value
+      const wsPort = document.getElementById('in-wsport').value
+      const target = document.getElementById('in-target').value
+      window.MCJS_WS_URL = `ws://${host}:${wsPort}/?target=${encodeURIComponent(target)}&user=${encodeURIComponent(user)}`
+      window.MCJS_USER = user
+      document.getElementById('menu').style.display = 'none'
+      window.MCJS_CONNECT(host, Number(wsPort))
+    }
+    document.getElementById('btn-demo').onclick = () => {
+      document.getElementById('menu').style.display = 'none'
+      window.MCJS_DEMO && window.MCJS_DEMO()
+    }
+  </script>
+</body>
+</html>
