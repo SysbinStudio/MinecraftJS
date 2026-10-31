@@ -1,0 +1,6 @@
+const mcd=require('minecraft-data')
+console.log('byName:', !!mcd.blocksByName, 'blocks:', mcd.blocks?.length)
+const g=mcd.blocks.find(b=>b.name==='grass_block')
+console.log('grass defaultState:', g && g.defaultState)
+console.log('stone:', mcd.blocks.find(b=>b.name==='stone')?.defaultState)
+console.log('dirt:', mcd.blocks.find(b=>b.name==='dirt')?.defaultState)

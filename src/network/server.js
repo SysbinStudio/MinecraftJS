@@ -220,39 +220,66 @@ export function createServer (opts = {}) {
     } catch (e) { console.error('[MinecraftJS] declare_commands 失败:', e.message) }
   }
 
-  let _flatChunkBuf = null
-  function sendFlatChunk (client, cx, cz) {
-    try {
-      if (!_flatChunkBuf) _flatChunkBuf = buildFlatChunkData()
-      client.write('map_chunk', {
-        x: cx, z: cz,
-        bitMap: 0b0000001111000000,
-        addBitMap: 0,
-        blocksBlockEntities: false,
-        chunkData: _flatChunkBuf,
-        blockEntities: [],
-        lightMask: 0b1111111111111111,
-        emptyLightMask: 0b1111111111111111000000000000,
-        skyLightMask: 0b1111111111111111,
-        fullLightMask: 0,
-        fullSkyLightMask: 0,
-        emptySkyLightMask: 0b1111111111111111000000000000
-      })
-    } catch (e) { server.logger?.warn?.('map_chunk 失败:', e.message) }
-  }
-
-  function buildFlatChunkData () {
+  // 平坦区块缓存：prismarine-chunk 生成的合法 1.20.1 序列化数据（含 palette/位压缩 + 全量光照）
+  let _flatChunkCache = null
+  function getFlatChunkData () {
+    if (_flatChunkCache) return _flatChunkCache
     const ChunkColumn = require('prismarine-chunk')('1.20.1')
     const mcdata = require('minecraft-data')('pc', '1.20.1')
     const c = new ChunkColumn()
     for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
       c.setBlockStateId([x, 64, z], mcdata.blocksByName.grass_block.defaultState)
-      for (let y = 58; y < 64; y++) c.setBlockStateId([x, y, z], mcdata.blocksByName.stone.defaultState)
       c.setBlockStateId([x, 63, z], mcdata.blocksByName.dirt.defaultState)
-      c.setBlockStateId([x, 62, z], mcdata.blocksByName.dirt.defaultState)
+      for (let y = 57; y < 63; y++) c.setBlockStateId([x, y, z], mcdata.blocksByName.stone.defaultState)
     }
-    if (c.initializeSync) c.initializeSync()
-    return c.dump(false)
+    if (typeof c.initializeProxy === 'function') c.initializeProxy()
+    else if (typeof c.initializeNonIndexedPrimitiveArrays === 'function') c.initializeNonIndexedPrimitiveArrays()
+    // 光照：天空全亮、方块光为 0（白天平原场景，参考 mcsrc.dev SkyAccess/SunAccess 常量填充）
+    const sectionCount = 24 // -64..320 / 16
+    const len2048 = 2048
+    const sky = Buffer.alloc(len2048, 0xff)
+    const blk = Buffer.alloc(len2048, 0)
+    const skyPacked = []
+    const blkPacked = []
+    for (let i = 0; i < sectionCount; i++) { skyPacked.push(sky); blkPacked.push(blk) }
+    _flatChunkCache = {
+      data: c.dump(false),
+      light: { skyLit: skyPacked, blockZero: blkPacked },
+      masks: {
+        present: (1 << sectionCount) - 1, // 0xFFFFFF 全部存在
+        allSections: (1 << sectionCount) - 1,
+        none: 0
+      }
+    }
+    return _flatChunkCache
+  }
+
+  function sendFlatChunk (client, cx, cz) {
+    try {
+      const f = getFlatChunkData()
+      client.write('map_chunk', {
+        x: cx, z: cz,
+        bitMap: 0b0000001111111111, // sections 0..9（y=-64..95），覆盖地面
+        addBitMap: 0,
+        blocksBlockEntities: false,
+        chunkData: f.data,
+        blockEntities: [],
+        airSlices: [],
+        lightMask: f.masks.allSections,
+        emptyLightMask: 0,
+        skyLightMask: f.masks.present,
+        blockLightMask: f.masks.present,
+        emptySkyLightMask: 0,
+        emptyBlockLightMask: 0,
+        data: f.light.skyLit,
+        skyYMask: f.masks.allSections,
+        blockYMask: f.masks.allSections,
+        emptySkyYMask: 0,
+        emptyBlockYMask: 0,
+        skyLight: f.light.skyLit,
+        blockLight: f.light.blockZero
+      })
+    } catch (e) { server.logger?.warn?.('map_chunk 失败:', e.message) }
   }
 
   function broadcast (name, params) {
