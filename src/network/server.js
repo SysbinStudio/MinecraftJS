@@ -10,60 +10,69 @@ const require = createRequire(import.meta.url)
 const UUID = require('uuid-1345')
 
 // 1.20.1 login 包的 dimensionCodec（维度注册表 NBT，参考 mcsrc.dev DimensionType/DimensionOptions 序列化）
-const DIMENSION_CODEC = {
-  type: 'compound',
-  name: '',
-  value: {
-    'minecraft:dimension_type': {
-      type: 'compound', name: '', value: {
-        'minecraft:overworld': {
-          type: 'compound', name: '', value: {
-            value: {
-              type: 'compound', name: '', value: {
-                has_ceiling: { type: 'byte', value: 0 },
-                ultracoral_block: { type: 'string', value: 'minecraft:mushroom_stem' },
-                natural: { type: 'byte', value: 1 },
-                coordinate_scale: { type: 'float', value: 1 },
-                effects: { type: 'string', value: 'minecraft:overworld' },
-                height: { type: 'int', value: 320 },
-                ambient_light: { type: 'float', value: 0 },
-                bed_works: { type: 'byte', value: 1 },
-                respawn_anchor_works: { type: 'byte', value: 0 },
-                piglin_safe: { type: 'byte', value: 0 },
-                logical_height: { type: 'int', value: 320 },
-                infiniburn: { type: 'string', value: 'minecraft:bedrock' },
-                min_y: { type: 'int', value: -64 }
-              }
-            }
-          }
-        }
-      }
-    },
-    'minecraft:worldgen/biome': {
-      type: 'compound', name: '', value: Object.fromEntries(
-        ['plains'].map(b => [`minecraft:${b}`, {
-          type: 'compound', name: '', value: {
-            value: {
-              type: 'compound', name: '', value: {
-                precipitation: { type: 'string', value: 'rain' },
-                depth: { type: 'float', value: 0.125 },
-                effects: { type: 'compound', name: '', value: { sky_color: { type: 'int', value: 7907327 }, fog_color: { type: 'int', value: 12638463 }, water_color: { type: 'int', value: 4159204 }, cloud_color: { type: 'int', value: 7972548 } } },
-                temperature: { type: 'float', value: 0.8 },
-                downfall: { type: 'float', value: 0.4 },
-                has_caves: { type: 'byte', value: 1 },
-                temperature_modification: { type: 'float', value: 0 },
-                biome_category: { type: 'string', value: 'plains' },
-                particles: { type: 'compound', name: '', value: {} },
-                grass_color_at_modified: { type: 'byte', value: 0 },
-                foliage_color: { type: 'int', value: 9286496 },
-                water_fog_color: { type: 'int', value: 329011 },
-                grass_color: { type: 'int', value: 9137815 }
-              }
-            }
-          }
-        }])
-      )
+// 结构要求（prismarine-registry#loadDimensionCodec / protodef mapper）：
+//   codec = { '<registry>': { type:'compound', value: { type: <registry id>, value: [ {name, id, element:{...}} ] } } }
+// 注册表条目在 NBT 中是 list（元素为 compound），键名 'value' 对应 protodef 的 "T"/"value" 数组容器；
+// 每个条目必须带 name/id/element 三字段，客户端按 id 建立 dimensionsById 索引。
+const nbtByte = v => ({ type: 'byte', value: v })
+const nbtInt = v => ({ type: 'int', value: v })
+const nbtFloat = v => ({ type: 'float', value: v })
+const nbtStr = v => ({ type: 'string', value: v })
+
+const OVERWORLD_DIM_TYPE = {
+  has_ceiling: nbtByte(0),
+  ultracoral_block: nbtStr('minecraft:mushroom_stem'), // 1.20.1 实际字段名为 ultra_warm/coral_block，保留兼容键
+  coral_block: nbtStr('minecraft:tube_coral_block'),
+  piglin_safe: nbtByte(0),
+  natural: nbtByte(1),
+  bed_works: nbtByte(1),
+  ambient_light: nbtFloat(0),
+  has_raids: nbtByte(1),
+  respawn_anchor_works: nbtByte(0),
+  logical_height: nbtInt(320),
+  infiniburn: nbtStr('#minecraft:infiniburn_overworld'),
+  effects: nbtStr('minecraft:overworld'),
+  min_y: nbtInt(-64),
+  height: nbtInt(320),
+  coordinate_scale: nbtFloat(1)
+}
+
+const PLAINS_BIOME = {
+  depth: nbtFloat(0.125),
+  precipitation: nbtStr('rain'),
+  temperature: nbtFloat(0.8),
+  downfall: nbtFloat(0.4),
+  has_caves: nbtByte(1),
+  effects: {
+    type: 'compound', name: '', value: {
+      sky_color: nbtInt(7907327),
+      fog_color: nbtInt(12638463),
+      water_color: nbtInt(4159204),
+      water_fog_color: nbtInt(329011)
     }
+  }
+}
+
+function registryEntry (name, id, element) {
+  return { type: 'compound', name: '', value: { name: nbtStr(name), id: nbtInt(id), element: { type: 'compound', name: '', value: element } } }
+}
+
+function registry (id, entries) {
+  return {
+    type: 'compound', name: '', value: {
+      type: nbtStr(id),
+      value: {
+        type: 'list', name: 'value',
+        value: { type: 'compound', value: entries.map(([n, i, el]) => registryEntry(n, i, el).value) }
+      }
+    }
+  }
+}
+
+const DIMENSION_CODEC = {
+  type: 'compound', name: '', value: {
+    'minecraft:dimension_type': registry('minecraft:dimension_type', [['minecraft:overworld', 0, OVERWORLD_DIM_TYPE]]),
+    'minecraft:worldgen/biome': registry('minecraft:worldgen/biome', [['minecraft:plains', 0, PLAINS_BIOME]])
   }
 }
 
