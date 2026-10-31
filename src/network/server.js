@@ -28,21 +28,8 @@ export function createServer (opts = {}) {
     const inv = new PlayerInventory()
     const menu = new ContainerMenu(0, inv)
     const cmds = defaultCommands({ players: [...players.values()], player: ent, world, time: 0 })
-    players.set(client.id, { client, ent, inv, menu, username: client.username })
+    players.set(client.id, { client, ent, inv, menu, cmds, username: client.username })
     entities.set(client.id, ent)
-
-    // 登录时序（对应原版 ServerGamePacketListenerImpl.startWaitingForPackets）：
-    // 先补发 declare_commands / recipes，否则 mineflayer/客户端插件在 join_game 时缺表会崩溃
-    try { client.writeAsRaw ? null : null } catch {}
-    const mcdata = server.version === '1.20.1' ? require('minecraft-data')('pc', '1.20.1') : null
-    if (mcdata) {
-      try {
-        client.write('declare_commands', { nodes: mcdata.commands || [] })
-        client.write('recipes', mcdata.recipes ? buildRecipesPacket(mcdata) : undefined)
-      } catch (e) { server.logger?.warn?.('补发表数据失败(可忽略):', e.message) }
-    }
-    broadcast('playerJoinMessage', { playerName: client.username })
-    server.logger?.info?.(`${client.username} 加入`)
 
     client.on('move', packet => {
       ent.x = packet.x ?? ent.x; ent.y = packet.y ?? ent.y; ent.z = packet.z ?? ent.z
@@ -96,50 +83,74 @@ export function createServer (opts = {}) {
     const p = players.get(client.id)
     if (!p) return
     const { ent } = p
-    const md = require('minecraft-data')('pc', '1.20.1')
+    broadcast('playerJoinMessage', { playerName: client.username })
+    server.logger?.info?.(`${client.username} 加入`)
+    // 原版进服时序（ServerGamePacketListenerImpl.sendPlayerInfo / PlayerList.broadcastAll）：
+    // declare_commands + recipes + update_time + world_border + spawn_position + player_info +
+    // game_event(start_waiting) + position + set_health + set_exp —— health 包触发客户端真正进入世界
     try {
-      client.write('declare_commands', { nodes: md.commands ?? [] })
-    } catch (e) { console.error('[MinecraftJS] declare_commands 序列化失败:', e.message, e.field ?? '') }
-    try { client.write('update_time', { age: [0, 0], time: [0, 0] }) } catch (e) { console.error('[MinecraftJS] update_time 失败:', e.message, e.field ?? '') }
+      const md = require('minecraft-data')('pc', '1.20.1')
+      client.write('declare_commands', { nodes: buildCommandNodes(md) })
+    } catch (e) { console.error('[MinecraftJS] declare_commands 失败:', e.message) }
     for (const [name, pkt] of [
+      ['update_time', { age: 0n, time: 0n }],
       ['initialize_world_border', { x: 0, z: 0, dangerZone: 5, warningTime: 15, absoluteHardDistance: 29999968, previousAbsoluteHardDistance: 29999968, newAbsoluteHardDistance: 29999968, speed: 0, portalTeleportBoundary: 16 }],
       ['spawn_position', { location: { x: 0, y: 65, z: 0 } }],
       ['set_default_spawn_position', { spawnPosition: { x: 0, y: 65, z: 0 } }],
       ['player_info', { action: 0, data: [{ UUID: client.uuid, name: client.username, properties: [] }] }],
       ['game_event', { type: 3 }],
       ['position', { x: ent.x, y: ent.y, z: ent.z, yaw: 0, pitch: 0, flags: 0x1f, teleportId: 1 }],
-      ['game_event', { type: 2 }]
+      ['game_event', { type: 2 }],
+      ['update_health', { health: 20, food: 20, saturation: 5 }],
+      ['experience', { experience: 0, level: 0, totalExperience: 0 }]
     ]) {
-      try { client.write(name, pkt) } catch (e) { console.error(`[MinecraftJS] ${name} 序列化失败:`, e.message, e.field ?? '') }
+      try { client.write(name, pkt) } catch (e) { console.error(`[MinecraftJS] ${name} 失败:`, e.message) }
     }
-    // 发送一个地面区块，避免落虚空
-    sendFlatChunk(client, 0, 0)
+    // 发送地面区块，避免落虚空（prismarine-chunk 生成合法 1.20.1 区块数据）
+    for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) sendFlatChunk(client, cx, cz)
   })
 
+  // 最小 BRIGADIER 命令节点树（根节点 + help/list/tp/give），供客户端补全
+  function buildCommandNodes (md) {
+    const root = { node: { type: 'root', children: [] }, executable: true }
+    const leaf = (name, children = []) => ({ node: { type: 'literal', name, executable: true }, children })
+    root.node.children.push(leaf('help'), leaf('list'), leaf('tp'), leaf('give'))
+    return [root]
+  }
+
+  let _flatChunkBuf = null
   function sendFlatChunk (client, cx, cz) {
     try {
-      const buf = buildFlatChunkData()
+      if (!_flatChunkBuf) _flatChunkBuf = buildFlatChunkData()
       client.write('map_chunk', {
         x: cx, z: cz,
-        bitMap: 0b0000001111000000, // sections y=-64..320 中地表附近 6 个 section
+        bitMap: 0b0000001111000000,
         addBitMap: 0,
         blocksBlockEntities: false,
-        chunkData: buf,
+        chunkData: _flatChunkBuf,
         blockEntities: [],
-        lightMask: 0, emptyLightMask: 0b111111111111111111111111
+        lightMask: 0b1111111111111111,
+        emptyLightMask: 0b1111111111111111000000000000,
+        skyLightMask: 0b1111111111111111,
+        fullLightMask: 0,
+        fullSkyLightMask: 0,
+        emptySkyLightMask: 0b1111111111111111000000000000
       })
     } catch (e) { server.logger?.warn?.('map_chunk 失败:', e.message) }
   }
 
   function buildFlatChunkData () {
-    // 简化：每个 section = 空气(单元素palette)；仅 y=64 所在 section(index 8) 底部一层 stone
-    // 使用 minecraft-protocol/prismarine-chunk 更稳妥：
     const ChunkColumn = require('prismarine-chunk')('1.20.1')
     const mcdata = require('minecraft-data')('pc', '1.20.1')
     const c = new ChunkColumn()
-    for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) c.setBlockStateId([x, 64, z], mcdata.blocksByName.stone.defaultState)
-    if (c.initialize) c.initialize()
-    return c.dump()
+    for (let x = 0; x < 16; x++) for (let z = 0; z < 16; z++) {
+      c.setBlockStateId([x, 64, z], mcdata.blocksByName.grass_block.defaultState)
+      for (let y = 58; y < 64; y++) c.setBlockStateId([x, y, z], mcdata.blocksByName.stone.defaultState)
+      c.setBlockStateId([x, 63, z], mcdata.blocksByName.dirt.defaultState)
+      c.setBlockStateId([x, 62, z], mcdata.blocksByName.dirt.defaultState)
+    }
+    if (c.initializeSync) c.initializeSync()
+    return c.dump(false)
   }
 
   function broadcast (name, params) {
