@@ -77,11 +77,16 @@ export function createServer (opts = {}) {
   })
 
 
-  // join_game（playerJoin）：原版登录时序——minecraft-protocol 已发 registry_data/finish_configuration，
-  // 此处补发 declare_commands、recipes、update_time、initialize_world_border、spawn_position、set_default_spawn_position、player_info、game_event(start_waiting)、dimension、position
-  server.on('playerJoin', client => {
+  // join_game：原版进服时序。不依赖 minecraft-protocol 的 playerJoin 事件，
+  // 直接监听客户端在 play 状态发出的第一个客户端包（ClientboundFinishedConfigurationPacket
+  // 之后客户端发送的 ServerboundSynchronizeStartGamePacket），此时服务端才允许下发 play 包。
+  // （参考 mcsrc.dev ServerGamePacketListenerImpl#handlePlayerAbilities / ServerCommonPacketListenerImpl#sendServerData）
+  function startPlaySequence (client) {
+    if (client.__mcjsStarted) return
+    client.__mcjsStarted = true
     const p = players.get(client.id)
     if (!p) return
+    console.log('[MCJS] startPlaySequence for', client.username)
     const { ent } = p
     broadcast('playerJoinMessage', { playerName: client.username })
     server.logger?.info?.(`${client.username} 加入`)
@@ -108,6 +113,18 @@ export function createServer (opts = {}) {
     }
     // 发送地面区块，避免落虚空（prismarine-chunk 生成合法 1.20.1 区块数据）
     for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) sendFlatChunk(client, cx, cz)
+    try { client.write('player_abilities', { flags: 0 }) } catch (e) { console.error('[MinecraftJS] player_abilities 失败:', e.message) }
+  }
+
+  // minecraft-protocol 的 playerJoin 在部分版本时序不可靠；以客户端 play 状态首个包为准：
+  // 原版客户端收到 finished_configuration 后发送 synchronize_start_game，服务端回 confirm_teleportation 前的一切
+  // play 下行都会被客户端丢弃。这里监听任意 play 入站包触发进服时序（幂等）。
+  server.on('playerJoin', client => startPlaySequence(client))
+  const playPackets = ['synchronize_start_game', 'confirm_teleportation', 'move', 'look', 'position', 'transaction', 'chat', 'arm_animation', 'keep_alive', 'client_command']
+  server.on('login', client => {
+    for (const name of playPackets) {
+      client.on(name, () => startPlaySequence(client))
+    }
   })
 
   // 最小 BRIGADIER 命令节点树（根节点 + help/list/tp/give），供客户端补全
