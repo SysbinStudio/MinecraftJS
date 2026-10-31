@@ -133,7 +133,8 @@ export function createServer (opts = {}) {
       action: { add_player: true, initialize_chat: false, update_game_mode: false, update_listed: false, update_latency: false, update_display_name: false },
       data: [{ uuid: uuidStr, player: { name: client.username, properties: [] }, chatSession: null, gamemode: 0, listed: true, latency: 0, displayName: null, listOrder: undefined }]
     })
-    write('positions_change', { x: ent.x, y: ent.y, z: ent.z, yaw: 0, pitch: 0, flags: 0x1f, teleportId: 1 })
+    write('positions_change', { x: ent.x, y: ent.y + 0.2, z: ent.z, yaw: 0, pitch: 0, flags: 0x1f, teleportId: 1 })
+    ent.onGround = false; ent.vy = 0
     write('game_event', { type: 3 }) // start waiting for chunks
     write('player_abilities', { flags: 0, flyingSpeed: 0.05, fieldOfViewModifier: 1 })
     write('update_health', { health: 20, food: 20, saturation: 5 })
