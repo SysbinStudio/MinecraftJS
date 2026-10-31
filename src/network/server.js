@@ -1,9 +1,71 @@
 // 原版协议服务端监听端：基于 minecraft-protocol，允许 MC 1.20.1 原版客户端直接加入
 import mc from 'minecraft-protocol'
+import { createRequire } from 'module'
 import { World } from '../world/world.js'
 import { LivingEntity } from '../entity/entity.js'
 import { ContainerMenu, PlayerInventory, SimpleInventory } from '../inventory/container.js'
 import { defaultCommands } from '../command/parser.js'
+
+const require = createRequire(import.meta.url)
+const UUID = require('uuid-1345')
+
+// 1.20.1 login 包的 dimensionCodec（维度注册表 NBT，参考 mcsrc.dev DimensionType/DimensionOptions 序列化）
+const DIMENSION_CODEC = {
+  type: 'compound',
+  name: '',
+  value: {
+    'minecraft:dimension_type': {
+      type: 'compound', name: '', value: {
+        'minecraft:overworld': {
+          type: 'compound', name: '', value: {
+            value: {
+              type: 'compound', name: '', value: {
+                has_ceiling: { type: 'byte', value: 0 },
+                ultracoral_block: { type: 'string', value: 'minecraft:mushroom_stem' },
+                natural: { type: 'byte', value: 1 },
+                coordinate_scale: { type: 'float', value: 1 },
+                effects: { type: 'string', value: 'minecraft:overworld' },
+                height: { type: 'int', value: 320 },
+                ambient_light: { type: 'float', value: 0 },
+                bed_works: { type: 'byte', value: 1 },
+                respawn_anchor_works: { type: 'byte', value: 0 },
+                piglin_safe: { type: 'byte', value: 0 },
+                logical_height: { type: 'int', value: 320 },
+                infiniburn: { type: 'string', value: 'minecraft:bedrock' },
+                min_y: { type: 'int', value: -64 }
+              }
+            }
+          }
+        }
+      }
+    },
+    'minecraft:worldgen/biome': {
+      type: 'compound', name: '', value: Object.fromEntries(
+        ['plains'].map(b => [`minecraft:${b}`, {
+          type: 'compound', name: '', value: {
+            value: {
+              type: 'compound', name: '', value: {
+                precipitation: { type: 'string', value: 'rain' },
+                depth: { type: 'float', value: 0.125 },
+                effects: { type: 'compound', name: '', value: { sky_color: { type: 'int', value: 7907327 }, fog_color: { type: 'int', value: 12638463 }, water_color: { type: 'int', value: 4159204 }, cloud_color: { type: 'int', value: 7972548 } } },
+                temperature: { type: 'float', value: 0.8 },
+                downfall: { type: 'float', value: 0.4 },
+                has_caves: { type: 'byte', value: 1 },
+                temperature_modification: { type: 'float', value: 0 },
+                biome_category: { type: 'string', value: 'plains' },
+                particles: { type: 'compound', name: '', value: {} },
+                grass_color_at_modified: { type: 'byte', value: 0 },
+                foliage_color: { type: 'int', value: 9286496 },
+                water_fog_color: { type: 'int', value: 329011 },
+                grass_color: { type: 'int', value: 9137815 }
+              }
+            }
+          }
+        }])
+      )
+    }
+  }
+}
 
 export function createServer (opts = {}) {
   const server = mc.createServer({
@@ -37,29 +99,39 @@ export function createServer (opts = {}) {
     const { ent } = p
     broadcast('playerJoinMessage', { playerName: client.username })
     server.logger?.info?.(`${client.username} 加入`)
-    // 原版进服时序（ServerGamePacketListenerImpl.sendPlayerInfo / PlayerList.broadcastAll）：
-    // declare_commands + recipes + update_time + world_border + spawn_position + player_info +
-    // game_event(start_waiting) + position + set_health + set_exp —— health 包触发客户端真正进入世界
-    sendBrigadierTree(client)
-    for (const [name, pkt] of [
-      ['update_time', { age: 0n, time: 0n }],
-      ['initialize_world_border', { x: 0, z: 0, dangerZone: 5, warningTime: 15, absoluteHardDistance: 29999968, previousAbsoluteHardDistance: 29999968, newAbsoluteHardDistance: 29999968, speed: 0, portalTeleportBoundary: 16 }],
-      ['spawn_position', { location: { x: 0, y: 65, z: 0 } }],
-      ['set_default_spawn_position', { spawnPosition: { x: 0, y: 65, z: 0 } }],
-      ['player_info', { action: 0, data: [{ UUID: client.uuid, name: client.username, properties: [] }] }],
-      ['game_event', { type: 3 }],
-      ['position', { x: ent.x, y: ent.y, z: ent.z, yaw: 0, pitch: 0, flags: 0x1f, teleportId: 1 }],
-      ['game_event', { type: 2 }],
-      ['update_health', { health: 20, food: 20, saturation: 5 }],
-      ['experience', { experience: 0, level: 0, totalExperience: 0 }]
-    ]) {
-      try { client.write(name, pkt) } catch (e) { console.error(`[MinecraftJS] ${name} 失败:`, e.message) }
-    }
-    // SynchronizeRecipesPacket：空配方表可被客户端接受（后续接入完整配方序列化）
-    try { client.write('recipe', {}) } catch (e) { try { client.write('unlock_recipes', { action: 0, recipes: [], craftingBookData: { recipeIdsToDisplay: [], toCraft: false } }) } catch (e2) {} }
+    // 原版进服时序（ServerGamePacketListenerImpl#startIncomingConfigurationTransition 之后）：
+    // login → declare_commands → recipes → update_time → world_border → spawn_position →
+    // player_info(add_player) → game_event(3) → position → player_abilities → set_health → set_exp
+    // （参考 mcsrc.dev ServerGamePacketListenerImpl.handlePlayerAbilities / PlayerList.broadcastAll）
+    const uuidStr = typeof client.uuid === 'string' ? client.uuid : UUID.stringify(client.uuid)
+    const write = (name, pkt) => { try { client.write(name, pkt) } catch (e) { console.error(`[MinecraftJS] ${name} 失败:`, e.message) } }
+    write('login', {
+      entityId: client.id, isHardcore: false, gameMode: 0, previousGameMode: -1,
+      worldNames: ['minecraft:overworld'], dimensionCodec: DIMENSION_CODEC,
+      worldType: 'minecraft:overworld', worldName: 'minecraft:overworld',
+      hashedSeed: 0n, maxPlayers: 20, viewDistance: 8, simulationDistance: 10,
+      reducedDebugInfo: false, enableRespawnScreen: true, isDebug: false, isFlat: true,
+      death: null, portalCooldown: 0
+    })
+    sendDeclareCommands(client)
+    write('unlock_recipes', { action: 0, craftingBookOpen: false, filteringCraftable: false, smeltingBookOpen: false, filteringSmeltable: false, blastFurnaceOpen: false, filteringBlastFurnace: false, smokerBookOpen: false, filteringSmoker: false, recipes1: [], recipes2: [] })
+    write('update_time', { age: 0n, time: 0n })
+    write('initialize_world_border', { x: 0, z: 0, dangerZone: 5, warningTime: 15, absoluteHardDistance: 29999968, previousAbsoluteHardDistance: 29999968, newAbsoluteHardDistance: 29999968, speed: 0, portalTeleportBoundary: 16 })
+    write('spawn_position', { location: { x: 0, y: 65, z: 0 } })
+    write('set_default_spawn_position', { spawnPosition: { x: 0, y: 65, z: 0 } })
+    // 1.20.1 player_info：action 为 bitflags；add_player 需携带 game_profile{name,properties}
+    write('player_info', {
+      action: { add_player: true, initialize_chat: false, update_game_mode: false, update_listed: false, update_latency: false, update_display_name: false },
+      data: [{ uuid: uuidStr, player: { name: client.username, properties: [] }, chatSession: null, gamemode: 0, listed: true, latency: 0, displayName: null, listOrder: undefined }]
+    })
+    write('positions_change', { x: ent.x, y: ent.y, z: ent.z, yaw: 0, pitch: 0, flags: 0x1f, teleportId: 1 })
+    write('game_event', { type: 3 }) // start waiting for chunks
+    write('player_abilities', { flags: 0, flyingSpeed: 0.05, fieldOfViewModifier: 1 })
+    write('update_health', { health: 20, food: 20, saturation: 5 })
+    write('experience', { experience: 0, level: 0, totalExperience: 0 })
     // 发送地面区块，避免落虚空（prismarine-chunk 生成合法 1.20.1 区块数据）
     for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) sendFlatChunk(client, cx, cz)
-    try { client.write('player_abilities', { flags: 0 }) } catch (e) { console.error('[MinecraftJS] player_abilities 失败:', e.message) }
+    write('game_event', { type: 2 }) // begin loading terrain area around player
   }
 
   server.on('login', client => {
@@ -129,21 +201,14 @@ export function createServer (opts = {}) {
   // 原版客户端收到 finished_configuration 后发送 synchronize_start_game，服务端回 confirm_teleportation 前的一切
   // play 下行都会被客户端丢弃。这里监听任意 play 入站包触发进服时序（幂等）。
 
-  // 原版 1.20.1：命令树通过 plugin_message('minecraft:brigadier') 下发（ClientboundCommandsPacket 编码）
-  function sendBrigadierTree (client) {
-    const literal = (name, children = []) => ({ redirect: undefined, children, nodeKind: { type: 'literal', name }, commands: undefined })
-    const root = [{ childNodes: ['help', 'list', 'tp', 'give'], nodeKind: { type: 'root' }, commands: { executable: false, redirects: false } }]
-    for (const n of ['help', 'list', 'tp', 'give']) root[0].childNodes.includes(n)
-    const nodes = [root[0],
-      { childNodes: [], nodeKind: { type: 'literal', name: 'help' }, commands: { executable: true, redirects: false } },
-      { childNodes: [], nodeKind: { type: 'literal', name: 'list' }, commands: { executable: true, redirects: false } },
-      { childNodes: [], nodeKind: { type: 'literal', name: 'tp' }, commands: { executable: true, redirects: false } },
-      { childNodes: [], nodeKind: { type: 'literal', name: 'give' }, commands: { executable: true, redirects: false } }]
-    const json = JSON.stringify({ nodes, root: 0 })
-    const payload = Buffer.from(json, 'utf8')
+  // 原版 declare_commands 包（ClientboundCommandsPacket）：command_node 结构为
+  // flags{command_node_type,has_command,has_redirect_node,has_custom_suggestions,unused} + children(varint[])
+  function sendDeclareCommands (client) {
+    const root = { flags: { command_node_type: 0, has_command: false, has_redirect_node: false, has_custom_suggestions: false, unused: 0 }, children: [1, 2, 3, 4] }
+    const lit = name => ({ flags: { command_node_type: 1, has_command: true, has_redirect_node: false, has_custom_suggestions: false, unused: 0 }, children: [], extraNodeData: { name } })
     try {
-      client.write('plugin_message', { channel: 'minecraft:brigadier', data: payload })
-    } catch (e) { console.error('[MinecraftJS] brigadier plugin_message 失败:', e.message) }
+      client.write('declare_commands', { nodes: [root, lit('help'), lit('list'), lit('tp'), lit('give')], rootIndex: 0 })
+    } catch (e) { console.error('[MinecraftJS] declare_commands 失败:', e.message) }
   }
 
   let _flatChunkBuf = null
@@ -206,5 +271,3 @@ function buildRecipesPacket (md) {
 }
 
 // ESM 环境下的 require 兼容
-import { createRequire } from 'module'
-const require = createRequire(import.meta.url)
